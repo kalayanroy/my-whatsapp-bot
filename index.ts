@@ -2,16 +2,36 @@ import makeWASocket, { DisconnectReason, useMultiFileAuthState, ConnectionState 
 import { Boom } from '@hapi/boom';
 import { config } from './config';
 import pino from 'pino';
-import * as qrcode from 'qrcode-terminal';
+import * as qrcodeTerminal from 'qrcode-terminal';
+import * as qrcode from 'qrcode';
 import { vocabularyDatabase, speakingTopics, tongueTwisters, translationSentences } from './database';
 import { startVocabularyScheduler, addWordsToDatabase, getWordCount } from './scheduler';
 import * as http from 'http';
 
 const port = process.env.PORT || 8080;
+let currentQR: string | undefined;
 
-const server = http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('Bot is running!');
+const server = http.createServer(async (req, res) => {
+    if (req.url === '/qr' && currentQR) {
+        try {
+            const qrImage = await qrcode.toDataURL(currentQR);
+            res.writeHead(200, { 'Content-Type': 'text/html' });
+            res.end(`
+                <html>
+                    <head><meta http-equiv="refresh" content="5"></head>
+                    <body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0;">
+                        <img src="${qrImage}" width="228" height="228" alt="Scan me" />
+                    </body>
+                </html>
+            `);
+        } catch (err) {
+            res.writeHead(500);
+            res.end('Error generating QR code');
+        }
+    } else {
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end(currentQR ? 'Go to /qr to scan code' : 'Bot is running / Connected');
+    }
 });
 
 server.listen(port, () => {
@@ -59,7 +79,10 @@ async function connectToWhatsApp() {
         const { connection, lastDisconnect, qr } = update;
 
         if (qr) {
-            qrcode.generate(qr, { small: true });
+            currentQR = qr; // Store for web view
+            qrcodeTerminal.generate(qr, { small: true }); // Print to terminal as backup
+        } else {
+            // Don't clear immediately if not present, as update might be partial
         }
 
         if (connection === 'close') {
@@ -70,6 +93,7 @@ async function connectToWhatsApp() {
             }
         } else if (connection === 'open') {
             console.log('opened connection');
+            currentQR = undefined; // Clear QR when connected
 
             // Start vocabulary scheduler
             startVocabularyScheduler();
